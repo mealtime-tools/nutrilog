@@ -24,7 +24,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Run test suite
-        run: uv run --extra dev pytest --cov=nutrilog
+        run: uv run pytest
 
   build-and-publish:
     name: Build & Publish to PyPI
