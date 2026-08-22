@@ -4,11 +4,12 @@ import base64
 import json
 import os
 import urllib.parse
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import click
+from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -22,8 +23,6 @@ from nutrilog.storage import (
 SCOPES = [
     "https://www.googleapis.com/auth/googlehealth.nutrition.writeonly",
     "https://www.googleapis.com/auth/googlehealth.nutrition.readonly",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "openid",
 ]
 
 TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -50,11 +49,9 @@ def is_headless_or_ssh() -> bool:
         or os.getenv("SSH_CONNECTION")
     ):
         return True
-    if os.name == "posix" and not (
+    return os.name == "posix" and not (
         os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY")
-    ):
-        return True
-    return False
+    )
 
 
 def extract_auth_code(input_str: str) -> str:
@@ -64,9 +61,7 @@ def extract_auth_code(input_str: str) -> str:
         if cleaned.startswith("code="):
             code_part = cleaned.split("code=", 1)[1]
             return urllib.parse.unquote(code_part.split("&", 1)[0])
-        if not (
-            cleaned.startswith("http://") or cleaned.startswith("https://")
-        ):
+        if not cleaned.startswith(("http://", "https://")):
             cleaned = "http://" + cleaned
         parsed = urllib.parse.urlparse(cleaned)
         qs = urllib.parse.parse_qs(parsed.query)
@@ -88,7 +83,7 @@ def get_client_config(
     if client_config_path and client_config_path.exists():
         try:
             return json.loads(client_config_path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             pass
 
     env_id = os.getenv("NUTRILOG_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
@@ -140,14 +135,14 @@ def get_credentials() -> Credentials | None:
 
     try:
         creds = Credentials.from_authorized_user_info(token_data, SCOPES)
-    except Exception:
+    except (KeyError, TypeError, ValueError):
         return None
 
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
             save_tokens(_token_dict_from_creds(creds))
-        except Exception:
+        except (GoogleAuthError, OSError):
             # If refresh fails, creds might be invalid
             return None
 
@@ -232,10 +227,6 @@ def login_remote(
     creds = flow.credentials
     save_tokens(_token_dict_from_creds(creds))
     return creds
-
-
-# Backward-compatibility alias
-login_manual = login_remote
 
 
 def get_auth_status() -> dict[str, Any]:

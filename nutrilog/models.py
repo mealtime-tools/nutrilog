@@ -1,19 +1,13 @@
-"""Data models for Nutrilog and Google Health API v4 payloads."""
+"""The small nutrition-log shape sent to Google Health."""
 
 import re
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Self
-
-from dateutil.parser import isoparse
-from pydantic import BaseModel, Field
-
-from nutrilog.units import WeightUnit
+from typing import Any
 
 
 class MealType(str, Enum):
-    """Meal category enum recognized by the Google Health API."""
-
     MEAL_TYPE_UNSPECIFIED = "MEAL_TYPE_UNSPECIFIED"
     BREAKFAST = "BREAKFAST"
     LUNCH = "LUNCH"
@@ -21,40 +15,20 @@ class MealType(str, Enum):
     SNACK = "SNACK"
 
     @classmethod
-    def from_string(cls, val: str) -> "MealType":
-        """Resolve a written string or alias to a MealType enum value."""
-        v = val.strip().upper()
-        if v in cls.__members__:
-            return cls[v]
-        mapping = {
+    def from_string(cls, value: str | None) -> "MealType":
+        key = (value or "").strip().upper()
+        aliases = {
             "B": cls.BREAKFAST,
-            "BREAKFAST": cls.BREAKFAST,
-            "MORNING": cls.BREAKFAST,
             "L": cls.LUNCH,
-            "LUNCH": cls.LUNCH,
-            "NOON": cls.LUNCH,
             "D": cls.DINNER,
-            "DINNER": cls.DINNER,
-            "EVENING": cls.DINNER,
-            "NIGHT": cls.DINNER,
             "S": cls.SNACK,
-            "SNACK": cls.SNACK,
-            "TEA": cls.SNACK,
         }
-        return mapping.get(v, cls.MEAL_TYPE_UNSPECIFIED)
+        return cls.__members__.get(
+            key, aliases.get(key, cls.MEAL_TYPE_UNSPECIFIED)
+        )
 
 
 class NutrientType(str, Enum):
-    """The Google Health API v4 `Nutrient` enum.
-
-    Complete rather than a curated subset: the API treats every nutrient
-    identically (a name plus a weight in grams), so listing them all means
-    logging caffeine or a vitamin needs no new code. Values must match the
-    API exactly or it returns a 400. Aggregate fat and carbohydrate are
-    absent by design: those totals live in the dedicated
-    `nutritionLog.totalFat` / `nutritionLog.totalCarbohydrate` fields.
-    """
-
     BIOTIN = "BIOTIN"
     CAFFEINE = "CAFFEINE"
     CALCIUM = "CALCIUM"
@@ -96,327 +70,127 @@ class NutrientType(str, Enum):
     ZINC = "ZINC"
 
     @classmethod
-    def from_string(cls, val: str) -> "NutrientType | None":
-        """Resolve a written nutrient name, or None if unknown."""
-        normalised = re.sub(r"[\s\-]+", "_", val.strip().upper())
-        if normalised in cls.__members__:
-            return cls[normalised]
-        return NUTRIENT_ALIASES.get(normalised)
+    def from_string(cls, value: str) -> "NutrientType | None":
+        key = re.sub(r"[\s-]+", "_", value.strip().upper())
+        key = {"FIBER": "DIETARY_FIBER", "FIBRE": "DIETARY_FIBER"}.get(
+            key, key
+        )
+        return cls.__members__.get(key)
 
 
-# Aliases for names whose API spelling nobody writes by hand. Excludes "salt".
-NUTRIENT_ALIASES = {
-    "FIBER": NutrientType.DIETARY_FIBER,
-    "FIBERS": NutrientType.DIETARY_FIBER,
-    "FIBRE": NutrientType.DIETARY_FIBER,
-    "FIBRES": NutrientType.DIETARY_FIBER,
-    "SUGARS": NutrientType.SUGAR,
-    "CARB": NutrientType.CARBOHYDRATES,
-    "CARBS": NutrientType.CARBOHYDRATES,
-    "CARBOHYDRATE": NutrientType.CARBOHYDRATES,
-}
+def _offset(value: datetime) -> str:
+    return f"{int((value.utcoffset() or timedelta()).total_seconds())}s"
 
 
-class GramsQuantity(BaseModel):
-    """A nutrient quantity measured in grams with an optional user unit."""
-
-    grams: float = 0.0
-    # The API echoes this back so clients can show "95mg" instead of "0.095g".
-    userProvidedUnit: WeightUnit | None = None  # noqa: N815
-
-
-class Energy(BaseModel):
-    """Energy quantity in kilocalories (kcal)."""
-
-    kcal: float = 0.0
-
-
-class Serving(BaseModel):
-    """Serving size information.
-
-    The API calls the unit `foodMeasurementUnitDisplayName` on the wire and
-    has no `unit` field at all, so writing one is rejected outright. It is
-    optional: an unrecorded unit stays unrecorded rather than being invented.
-    """
-
-    amount: float = 1.0
-    unit: str | None = None
-
-
-class NutrientEntry(BaseModel):
-    """A single nutrient entry pairing an API nutrient name with quantity."""
-
-    nutrient: str
-    quantity: GramsQuantity
-
-
-def _utc_offset_seconds(dt: datetime) -> str | None:
-    """The datetime's UTC offset as an API Duration, or None if naive."""
-    offset = dt.utcoffset()
-    if offset is None:
-        return None
-    return f"{int(offset.total_seconds())}s"
-
-
-class TimeInterval(BaseModel):
-    """Time interval representing when a meal was consumed."""
-
-    startTime: str  # noqa: N815
-    endTime: str  # noqa: N815
-    # The API ignores the offset inside startTime and stores 0s unless sent.
-    startUtcOffset: str | None = None  # noqa: N815
-    endUtcOffset: str | None = None  # noqa: N815
-
-    @property
-    def start_datetime(self) -> datetime:
-        """Parse startTime into a timezone-aware datetime object."""
-        return isoparse(self.startTime)
-
-    @property
-    def end_datetime(self) -> datetime:
-        """Parse endTime into a timezone-aware datetime object."""
-        return isoparse(self.endTime)
+@dataclass(frozen=True)
+class TimeInterval:
+    start: datetime
+    end: datetime
 
     @classmethod
-    def from_datetimes(
-        cls,
-        start: datetime,
-        end: datetime | None = None,
-    ) -> Self:
-        """Create a TimeInterval from start and optional end datetimes."""
+    def from_start(cls, start: datetime) -> "TimeInterval":
         if start.tzinfo is None:
-            start = start.replace(tzinfo=timezone.utc)
-        if end is None:
-            end = start + timedelta(minutes=1)
-        elif end.tzinfo is None:
-            end = end.replace(tzinfo=timezone.utc)
+            start = start.replace(tzinfo=datetime.now().astimezone().tzinfo)
+        return cls(start=start, end=start + timedelta(minutes=1))
 
-        if end <= start:
-            end = start + timedelta(minutes=1)
-
-        return cls(
-            startTime=start.isoformat().replace("+00:00", "Z"),
-            endTime=end.isoformat().replace("+00:00", "Z"),
-            startUtcOffset=_utc_offset_seconds(start),
-            endUtcOffset=_utc_offset_seconds(end),
-        )
+    def as_api(self) -> dict[str, str]:
+        return {
+            "startTime": self.start.isoformat(),
+            "endTime": self.end.isoformat(),
+            "startUtcOffset": _offset(self.start),
+            "endUtcOffset": _offset(self.end),
+        }
 
 
-class MealLog(BaseModel):
-    """A complete meal log entry matching the Google Health API schema."""
-
-    id: str | None = None
-    foodDisplayName: str = "Meal"  # noqa: N815
-    mealType: MealType = MealType.MEAL_TYPE_UNSPECIFIED  # noqa: N815
+@dataclass
+class MealLog:
+    name: str
+    meal_type: MealType
     interval: TimeInterval
-    energy: Energy = Field(default_factory=Energy)
-    totalCarbohydrate: GramsQuantity = Field(default_factory=GramsQuantity)  # noqa: N815
-    totalFat: GramsQuantity = Field(default_factory=GramsQuantity)  # noqa: N815
-    nutrients: list[NutrientEntry] = Field(default_factory=list)
-    serving: Serving | None = None
-
-    @property
-    def calories_kcal(self) -> float:
-        """Return total calories in kcal."""
-        return self.energy.kcal
-
-    @property
-    def protein_g(self) -> float:
-        """Return total protein in grams."""
-        return self.nutrient_grams(NutrientType.PROTEIN)
-
-    def nutrient_grams(self, nutrient: NutrientType) -> float:
-        """Grams recorded for a nutrient, or 0.0 when it was never logged."""
-        for n in self.nutrients:
-            if n.nutrient.upper() == nutrient.value:
-                return n.quantity.grams
-        return 0.0
-
-    @property
-    def carbs_g(self) -> float:
-        """Return total carbohydrates in grams."""
-        if self.totalCarbohydrate.grams:
-            return self.totalCarbohydrate.grams
-        return self.nutrient_grams(NutrientType.CARBOHYDRATES)
-
-    @property
-    def fat_g(self) -> float:
-        """Return total fat in grams."""
-        return self.totalFat.grams
+    kcal: float | None = None
+    protein: float | None = None
+    fat: float | None = None
+    carbs: float | None = None
+    grams: float | None = None
+    nutrients: dict[NutrientType, float] = field(default_factory=dict)
+    id: str | None = None
 
     def to_api_payload(self) -> dict[str, Any]:
-        """Convert to Google Health API v4 nutritionLog dataPoint format."""
-        nutrients_list = []
-        for n in self.nutrients:
-            # 9dp preserves microgram precision (e.g. 2.4µg = 0.0000024g).
-            quantity: dict[str, Any] = {"grams": round(n.quantity.grams, 9)}
-            if n.quantity.userProvidedUnit is not None:
-                quantity["userProvidedUnit"] = (
-                    n.quantity.userProvidedUnit.value
-                )
-            nutrients_list.append(
-                {"nutrient": n.nutrient, "quantity": quantity}
-            )
-
-        # Ensure protein is recorded in nutrients list
-        has_protein = any(
-            n.nutrient.upper() == NutrientType.PROTEIN.value
-            for n in self.nutrients
-        )
-        if not has_protein and self.protein_g > 0:
-            nutrients_list.append(
-                {
-                    "nutrient": NutrientType.PROTEIN.value,
-                    "quantity": {"grams": round(self.protein_g, 2)},
-                }
-            )
-
-        interval_payload: dict[str, Any] = {
-            "startTime": self.interval.startTime,
-            "endTime": self.interval.endTime,
+        """Omit unknown fields. Keep explicitly supplied zeros."""
+        log: dict[str, Any] = {
+            "foodDisplayName": self.name,
+            "mealType": self.meal_type.value,
+            "interval": self.interval.as_api(),
         }
-
-        # Omitted rather than defaulted: naive interval has no offset to claim.
-        if self.interval.startUtcOffset is not None:
-            interval_payload["startUtcOffset"] = self.interval.startUtcOffset
-        if self.interval.endUtcOffset is not None:
-            interval_payload["endUtcOffset"] = self.interval.endUtcOffset
-
-        payload: dict[str, Any] = {
-            "nutritionLog": {
-                "foodDisplayName": self.foodDisplayName,
-                "mealType": self.mealType.value,
-                "interval": interval_payload,
-                "energy": {"kcal": round(self.energy.kcal, 1)},
-                "totalCarbohydrate": {"grams": round(self.carbs_g, 2)},
-                "totalFat": {"grams": round(self.fat_g, 2)},
-                "nutrients": nutrients_list,
+        if self.kcal is not None:
+            log["energy"] = {"kcal": self.kcal}
+        if self.carbs is not None:
+            log["totalCarbohydrate"] = {"grams": self.carbs}
+        if self.fat is not None:
+            log["totalFat"] = {"grams": self.fat}
+        if self.grams is not None:
+            log["serving"] = {
+                "amount": self.grams,
+                "foodMeasurementUnitDisplayName": "gram",
             }
-        }
-        if self.serving:
-            serving: dict[str, Any] = {"amount": self.serving.amount}
-            if self.serving.unit is not None:
-                serving["foodMeasurementUnitDisplayName"] = self.serving.unit
-            payload["nutritionLog"]["serving"] = serving
-        return payload
 
-    @classmethod
-    def from_api_payload(
-        cls, data: dict[str, Any], point_id: str | None = None
-    ) -> Self:
-        """Parse Google Health API v4 response payload into MealLog."""
-        if "response" in data and isinstance(data["response"], dict):
-            data = data["response"]
-
-        if not point_id:
-            name = data.get("name", "")
-            if name:
-                point_id = name.split("/")[-1]
-            else:
-                point_id = data.get("id") or data.get("dataPointId")
-
-        log_data = data.get("nutritionLog", data)
-        interval_data = log_data.get("interval", {})
-        start_time = interval_data.get(
-            "startTime", datetime.now(timezone.utc).isoformat()
-        )
-        end_time = interval_data.get("endTime", start_time)
-
-        energy_data = log_data.get("energy", {})
-        kcal = float(energy_data.get("kcal", 0.0))
-
-        carbs_data = log_data.get("totalCarbohydrate", {})
-        carbs_g = float(carbs_data.get("grams", 0.0))
-
-        fat_data = log_data.get("totalFat", {})
-        fat_g = float(fat_data.get("grams", 0.0))
-
-        raw_nutrients = log_data.get("nutrients", [])
-        nutrients = []
-        for n in raw_nutrients:
-            quantity_data = n.get("quantity", {})
-            nutrients.append(
-                NutrientEntry(
-                    nutrient=n.get("nutrient", ""),
-                    quantity=GramsQuantity(
-                        grams=float(quantity_data.get("grams", 0.0)),
-                        userProvidedUnit=quantity_data.get("userProvidedUnit"),
-                    ),
+        nutrients = dict(self.nutrients)
+        if self.protein is not None:
+            nutrients[NutrientType.PROTEIN] = self.protein
+        if nutrients:
+            log["nutrients"] = [
+                {"nutrient": nutrient.value, "quantity": {"grams": grams}}
+                for nutrient, grams in sorted(
+                    nutrients.items(), key=lambda item: item[0].value
                 )
-            )
-
-        serving_data = log_data.get("serving")
-        serving = None
-        if serving_data:
-            unit = serving_data.get("foodMeasurementUnitDisplayName")
-            serving = Serving(
-                amount=float(serving_data.get("amount", 1.0)),
-                unit=str(unit) if unit is not None else None,
-            )
-
-        raw_meal_type = log_data.get(
-            "mealType", MealType.MEAL_TYPE_UNSPECIFIED.value
-        )
-        meal_type = MealType.from_string(raw_meal_type)
-
-        return cls(
-            id=point_id or data.get("id") or data.get("dataPointId"),
-            foodDisplayName=log_data.get("foodDisplayName", "Meal"),
-            mealType=meal_type,
-            interval=TimeInterval(
-                startTime=start_time,
-                endTime=end_time,
-                startUtcOffset=interval_data.get("startUtcOffset"),
-                endUtcOffset=interval_data.get("endUtcOffset"),
-            ),
-            energy=Energy(kcal=kcal),
-            totalCarbohydrate=GramsQuantity(grams=carbs_g),
-            totalFat=GramsQuantity(grams=fat_g),
-            nutrients=nutrients,
-            serving=serving,
-        )
-
-
-class MacroSummary(BaseModel):
-    """Rollup summary of daily macros and nutrients across multiple meals."""
-
-    total_calories: float = 0.0
-    total_protein: float = 0.0
-    total_carbs: float = 0.0
-    total_fat: float = 0.0
-    # Grams per nutrient name, for everything without a dedicated total above.
-    nutrient_totals: dict[str, float] = Field(default_factory=dict)
-    meals: list[MealLog] = Field(default_factory=list)
-
-    @property
-    def meal_count(self) -> int:
-        """Return the number of meals included in the summary."""
-        return len(self.meals)
-
-    def add_meal(self, meal: MealLog) -> None:
-        """Add a meal and aggregate its macronutrients and nutrients."""
-        self.meals.append(meal)
-        self.total_calories += meal.calories_kcal
-        self.total_protein += meal.protein_g
-        self.total_carbs += meal.carbs_g
-        self.total_fat += meal.fat_g
-
-        # Protein and carbohydrates are excluded: already totalled above.
-        for entry in meal.nutrients:
-            name = entry.nutrient.upper()
-            if name in (
-                NutrientType.PROTEIN.value,
-                NutrientType.CARBOHYDRATES.value,
-            ):
-                continue
-            self.nutrient_totals[name] = (
-                self.nutrient_totals.get(name, 0.0) + entry.quantity.grams
-            )
+            ]
+        return {"nutritionLog": log}
 
     @classmethod
-    def from_meals(cls, meals: list[MealLog]) -> Self:
-        """Construct a MacroSummary rollup from a list of MealLog objects."""
-        summary = cls()
-        for meal in meals:
-            summary.add_meal(meal)
-        return summary
+    def from_api_payload(cls, data: dict[str, Any]) -> "MealLog":
+        log = data.get("nutritionLog", data)
+        raw_interval = log.get("interval") or {}
+        start = _datetime(raw_interval.get("startTime"))
+        end = _datetime(
+            raw_interval.get("endTime"), start + timedelta(minutes=1)
+        )
+        nutrients: dict[NutrientType, float] = {}
+        for entry in log.get("nutrients") or []:
+            nutrient = NutrientType.from_string(
+                str(entry.get("nutrient") or "")
+            )
+            grams = (entry.get("quantity") or {}).get("grams")
+            if nutrient is not None and grams is not None:
+                nutrients[nutrient] = float(grams)
+        protein = nutrients.pop(NutrientType.PROTEIN, None)
+        serving = log.get("serving") or {}
+        unit = str(serving.get("foodMeasurementUnitDisplayName") or "")
+        grams = (
+            _quantity(serving, "amount")
+            if unit.casefold() in ("g", "gram", "grams")
+            else None
+        )
+        return cls(
+            id=(data.get("name") or data.get("id") or "").split("/")[-1]
+            or None,
+            name=str(log.get("foodDisplayName") or "Meal"),
+            meal_type=MealType.from_string(log.get("mealType")),
+            interval=TimeInterval(start=start, end=end),
+            kcal=_quantity(log.get("energy"), "kcal"),
+            carbs=_quantity(log.get("totalCarbohydrate"), "grams"),
+            fat=_quantity(log.get("totalFat"), "grams"),
+            protein=protein,
+            grams=grams,
+            nutrients=nutrients,
+        )
+
+
+def _quantity(container: Any, key: str) -> float | None:
+    value = container.get(key) if isinstance(container, dict) else None
+    return float(value) if value is not None else None
+
+
+def _datetime(value: Any, default: datetime | None = None) -> datetime:
+    if value is None:
+        return default or datetime.now(UTC)
+    return datetime.fromisoformat(str(value))

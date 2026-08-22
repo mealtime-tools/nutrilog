@@ -30,4 +30,4 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Run test suite
-        run: uv run --python ${{ matrix.python-version }} --extra dev pytest --cov=nutrilog
+        run: uv run --python ${{ matrix.python-version }} pytest
