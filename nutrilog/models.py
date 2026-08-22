@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
@@ -150,9 +150,14 @@ class MealLog:
     def from_api_payload(cls, data: dict[str, Any]) -> "MealLog":
         log = data.get("nutritionLog", data)
         raw_interval = log.get("interval") or {}
-        start = _datetime(raw_interval.get("startTime"))
+        start = _datetime(
+            raw_interval.get("startTime"),
+            utc_offset=raw_interval.get("startUtcOffset"),
+        )
         end = _datetime(
-            raw_interval.get("endTime"), start + timedelta(minutes=1)
+            raw_interval.get("endTime"),
+            start + timedelta(minutes=1),
+            raw_interval.get("endUtcOffset"),
         )
         nutrients: dict[NutrientType, float] = {}
         for entry in log.get("nutrients") or []:
@@ -190,7 +195,25 @@ def _quantity(container: Any, key: str) -> float | None:
     return float(value) if value is not None else None
 
 
-def _datetime(value: Any, default: datetime | None = None) -> datetime:
-    if value is None:
-        return default or datetime.now(UTC)
-    return datetime.fromisoformat(str(value))
+def _datetime(
+    value: Any,
+    default: datetime | None = None,
+    utc_offset: Any = None,
+) -> datetime:
+    parsed = (
+        datetime.fromisoformat(str(value))
+        if value is not None
+        else default or datetime.now(UTC)
+    )
+    offset = _fixed_offset(utc_offset)
+    return parsed.astimezone(offset) if offset else parsed
+
+
+def _fixed_offset(value: Any) -> timezone | None:
+    match = re.fullmatch(r"([+-]?\d+(?:\.\d+)?)s", str(value or ""))
+    if match is None:
+        return None
+    try:
+        return timezone(timedelta(seconds=float(match.group(1))))
+    except ValueError:
+        return None

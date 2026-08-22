@@ -1,7 +1,7 @@
 """Small contracts for the Google Health write boundary."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 import httpx
 from click.testing import CliRunner
@@ -14,7 +14,7 @@ from nutrilog.models import MealLog, MealType, TimeInterval
 
 
 def meal(**changes) -> MealLog:
-    values = {
+    defaults = {
         "name": "Water",
         "meal_type": MealType.SNACK,
         "interval": TimeInterval.from_start(
@@ -22,8 +22,7 @@ def meal(**changes) -> MealLog:
         ),
         "kcal": 0,
     }
-    values.update(changes)
-    return MealLog(**values)
+    return MealLog(**(defaults | changes))
 
 
 def test_api_payload_omits_unknowns_and_keeps_explicit_zero() -> None:
@@ -38,6 +37,24 @@ def test_api_payload_omits_unknowns_and_keeps_explicit_zero() -> None:
         "amount": 90,
         "foodMeasurementUnitDisplayName": "gram",
     }
+
+
+def test_api_payload_restores_recorded_utc_offset() -> None:
+    offset = timezone(timedelta(hours=10))
+    original = meal(
+        interval=TimeInterval.from_start(
+            datetime(2026, 8, 22, 21, 30, tzinfo=offset)
+        )
+    )
+    payload = original.to_api_payload()
+    interval = payload["nutritionLog"]["interval"]
+    interval["startTime"] = "2026-08-22T11:30:00+00:00"
+    interval["endTime"] = "2026-08-22T11:31:00+00:00"
+
+    restored = MealLog.from_api_payload(payload)
+
+    assert restored.interval.start.isoformat() == "2026-08-22T21:30:00+10:00"
+    assert restored.interval.end.isoformat() == "2026-08-22T21:31:00+10:00"
 
 
 def test_json_input_and_output_are_flat() -> None:
