@@ -156,8 +156,8 @@ def test_duplicate_never_deletes_and_delete_is_separate(monkeypatch) -> None:
     )
 
     class Client:
-        saved = None
-        deleted = None
+        saved: MealLog | None = None
+        deleted: str | None = None
 
         def get_meal(self, point_id: str) -> MealLog:
             assert point_id == "old"
@@ -186,6 +186,7 @@ def test_duplicate_never_deletes_and_delete_is_separate(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0, result.output
+    assert Client.saved is not None
     assert Client.saved.protein == 0
     assert Client.saved.carbs == 47
     assert Client.saved.grams == 90
@@ -200,6 +201,7 @@ def test_duplicate_never_deletes_and_delete_is_separate(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0, result.output
+    assert Client.saved is not None
     assert Client.saved.interval.start.isoformat() == (
         "2026-08-22T22:30:00+10:00"
     )

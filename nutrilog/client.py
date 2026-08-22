@@ -1,5 +1,7 @@
 """The two Google Health requests Nutrilog makes."""
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import datetime
 
 import httpx
@@ -39,21 +41,13 @@ class GoogleHealthClient:
             "Content-Type": "application/json",
         }
 
-    def log_meal(self, meal: MealLog) -> MealLog:
-        url = f"{self.base_url}/users/me/dataTypes/nutrition-log/dataPoints"
+    @contextmanager
+    def _client(self) -> Generator[httpx.Client]:
         try:
             with httpx.Client(
                 timeout=self.timeout, transport=self.transport
             ) as client:
-                response = client.post(
-                    url, json=meal.to_api_payload(), headers=self._headers()
-                )
-                response.raise_for_status()
-                data = response.json()
-                saved = MealLog.from_api_payload(data.get("response", data))
-                if saved.grams is None:
-                    saved.grams = meal.grams
-                return saved
+                yield client
         except httpx.HTTPStatusError as exc:
             message = _error_message(exc.response)
             raise GoogleHealthError(
@@ -64,27 +58,28 @@ class GoogleHealthClient:
                 f"Google Health request failed: {exc}"
             ) from exc
 
+    def log_meal(self, meal: MealLog) -> MealLog:
+        url = f"{self.base_url}/users/me/dataTypes/nutrition-log/dataPoints"
+        with self._client() as client:
+            response = client.post(
+                url, json=meal.to_api_payload(), headers=self._headers()
+            )
+            response.raise_for_status()
+            data = response.json()
+            saved = MealLog.from_api_payload(data.get("response", data))
+            if saved.grams is None:
+                saved.grams = meal.grams
+            return saved
+
     def get_meal(self, point_id: str) -> MealLog:
         url = (
             f"{self.base_url}/users/me/dataTypes/nutrition-log/dataPoints/"
             f"{point_id}"
         )
-        try:
-            with httpx.Client(
-                timeout=self.timeout, transport=self.transport
-            ) as client:
-                response = client.get(url, headers=self._headers())
-                response.raise_for_status()
-                return MealLog.from_api_payload(response.json())
-        except httpx.HTTPStatusError as exc:
-            message = _error_message(exc.response)
-            raise GoogleHealthError(
-                f"Google Health returned {exc.response.status_code}: {message}"
-            ) from exc
-        except httpx.RequestError as exc:
-            raise GoogleHealthError(
-                f"Google Health request failed: {exc}"
-            ) from exc
+        with self._client() as client:
+            response = client.get(url, headers=self._headers())
+            response.raise_for_status()
+            return MealLog.from_api_payload(response.json())
 
     def delete_meal(self, point_id: str) -> None:
         url = (
@@ -92,25 +87,13 @@ class GoogleHealthClient:
             "nutrition-log/dataPoints:batchDelete"
         )
         name = f"users/me/dataTypes/nutrition-log/dataPoints/{point_id}"
-        try:
-            with httpx.Client(
-                timeout=self.timeout, transport=self.transport
-            ) as client:
-                response = client.post(
-                    url,
-                    json={"names": [name]},
-                    headers=self._headers(),
-                )
-                response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            message = _error_message(exc.response)
-            raise GoogleHealthError(
-                f"Google Health returned {exc.response.status_code}: {message}"
-            ) from exc
-        except httpx.RequestError as exc:
-            raise GoogleHealthError(
-                f"Google Health request failed: {exc}"
-            ) from exc
+        with self._client() as client:
+            response = client.post(
+                url,
+                json={"names": [name]},
+                headers=self._headers(),
+            )
+            response.raise_for_status()
 
     def today(self) -> list[MealLog]:
         """Read nutrition logs whose start time is today locally."""
@@ -118,26 +101,14 @@ class GoogleHealthClient:
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start.replace(hour=23, minute=59, second=59, microsecond=999999)
         url = f"{self.base_url}/users/me/dataTypes/nutrition-log/dataPoints"
-        try:
-            with httpx.Client(
-                timeout=self.timeout, transport=self.transport
-            ) as client:
-                response = client.get(
-                    url,
-                    params={"pageSize": 10000},
-                    headers=self._headers(),
-                )
-                response.raise_for_status()
-                points = response.json().get("dataPoints") or []
-        except httpx.HTTPStatusError as exc:
-            message = _error_message(exc.response)
-            raise GoogleHealthError(
-                f"Google Health returned {exc.response.status_code}: {message}"
-            ) from exc
-        except httpx.RequestError as exc:
-            raise GoogleHealthError(
-                f"Google Health request failed: {exc}"
-            ) from exc
+        with self._client() as client:
+            response = client.get(
+                url,
+                params={"pageSize": 10000},
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+            points = response.json().get("dataPoints") or []
 
         meals = [MealLog.from_api_payload(point) for point in points]
         return [
