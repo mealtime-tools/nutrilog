@@ -3,7 +3,7 @@
 import json
 import math
 import re
-from datetime import datetime
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -226,10 +226,12 @@ def _total(meals: list[dict[str, Any]], key: str) -> float | None:
 
 def _history_human(data: dict[str, Any]) -> list[str]:
     if not data["meals"]:
-        return ["No food logged today."]
+        return ["No food logged."]
     lines = []
     for meal in data["meals"]:
-        consumed = datetime.fromisoformat(meal["time"]).strftime("%H:%M")
+        consumed = datetime.fromisoformat(meal["time"]).strftime(
+            "%Y-%m-%d %H:%M"
+        )
         macros = "  ".join(
             f"{key} {meal[key]}" for key in ("kcal", "protein", "fat", "carbs")
         )
@@ -243,6 +245,33 @@ def _history_human(data: dict[str, Any]) -> list[str]:
         )
     )
     return lines
+
+
+def _history_value(value: str | None) -> date | datetime:
+    today = datetime.now().astimezone().date()
+    if value is None or value == "today":
+        return today
+    if value == "yesterday":
+        return today - timedelta(days=1)
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        pass
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise UsageError(f"invalid date or datetime: {value}") from exc
+    if parsed.tzinfo is None:
+        raise UsageError("history datetimes must include a UTC offset")
+    return parsed
+
+
+def _utc_bound(value: date | datetime, *, end: bool = False) -> datetime:
+    if isinstance(value, datetime):
+        return value.astimezone(UTC)
+    if end:
+        value += timedelta(days=1)
+    return datetime.combine(value, time.min).astimezone().astimezone(UTC)
 
 
 @click.group(cls=JsonAwareGroup)
@@ -387,11 +416,31 @@ def delete_command(point_id: str, yes: bool, json_output: bool) -> None:
 
 
 @app.command("history")
+@click.argument("start", required=False)
+@click.argument("end", required=False)
 @json_option
-def history_command(json_output: bool) -> None:
-    """Show today's Google Health food log."""
+def history_command(
+    start: str | None, end: str | None, json_output: bool
+) -> None:
+    """Show logs in a date or time range.
+
+    Values may be dates or offset-aware ISO datetimes. With no values, show
+    today; one value must be a date and selects that local calendar day. An
+    end date is inclusive; an end datetime is exclusive.
+    """
+    start_value = _history_value(start)
+    if end is None and isinstance(start_value, datetime):
+        raise UsageError("a history datetime needs an end datetime or date")
+    end_value = _history_value(end) if end else start_value
+    start_time = _utc_bound(start_value)
+    end_time = _utc_bound(end_value, end=True)
+    if end_time <= start_time:
+        raise UsageError("history end must follow start")
     try:
-        meals = [meal_json(meal) for meal in GoogleHealthClient().today()]
+        meals = [
+            meal_json(meal)
+            for meal in GoogleHealthClient().history(start_time, end_time)
+        ]
     except GoogleHealthError as exc:
         raise RemoteError(str(exc)) from exc
     summary = {

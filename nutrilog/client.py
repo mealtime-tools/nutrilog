@@ -2,7 +2,7 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 from google.oauth2.credentials import Credentials
@@ -95,11 +95,10 @@ class GoogleHealthClient:
             )
             response.raise_for_status()
 
-    def today(self) -> list[MealLog]:
-        """Read nutrition logs whose start time is today locally."""
-        now = datetime.now().astimezone()
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start.replace(hour=23, minute=59, second=59, microsecond=999999)
+    def history(self, start: datetime, end: datetime) -> list[MealLog]:
+        """Read nutrition logs within a half-open UTC interval."""
+        start = start.astimezone(UTC)
+        end = end.astimezone(UTC)
         url = f"{self.base_url}/users/me/dataTypes/nutrition-log/dataPoints"
         with self._client() as client:
             response = client.get(
@@ -114,7 +113,7 @@ class GoogleHealthClient:
         return [
             meal
             for meal in meals
-            if start <= meal.interval.start.astimezone() <= end
+            if start <= meal.interval.start.astimezone(UTC) < end
         ]
 
 

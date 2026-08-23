@@ -144,15 +144,28 @@ def test_client_posts_one_nutrition_log() -> None:
     ]
 
 
-def test_client_reads_todays_food_log() -> None:
-    current = meal()
-    current.interval = TimeInterval.from_start(datetime.now().astimezone())
+def test_client_filters_food_log_with_utc_range() -> None:
+    current = meal(
+        interval=TimeInterval.from_start(datetime(2026, 8, 16, 12, tzinfo=UTC))
+    )
+    outside = meal(
+        name="Coffee",
+        interval=TimeInterval.from_start(datetime(2026, 8, 18, 0, tzinfo=UTC)),
+    )
+    start = datetime(2026, 8, 16, tzinfo=UTC)
+    end = datetime(2026, 8, 18, tzinfo=UTC)
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
+        assert "filter" not in request.url.params
         return httpx.Response(
             200,
-            json={"dataPoints": [current.to_api_payload()]},
+            json={
+                "dataPoints": [
+                    outside.to_api_payload(),
+                    current.to_api_payload(),
+                ]
+            },
         )
 
     client = GoogleHealthClient(
@@ -160,7 +173,43 @@ def test_client_reads_todays_food_log() -> None:
         transport=httpx.MockTransport(handler),
     )
 
-    assert [entry.name for entry in client.today()] == ["Water"]
+    assert [entry.name for entry in client.history(start, end)] == ["Water"]
+
+
+def test_history_command_accepts_dates_and_datetimes(monkeypatch) -> None:
+    class Client:
+        interval: tuple[datetime, datetime] | None = None
+
+        def history(self, start: datetime, end: datetime) -> list[MealLog]:
+            Client.interval = (start, end)
+            return []
+
+    monkeypatch.setattr("nutrilog.cli.GoogleHealthClient", Client)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app, ["history", "2026-08-16", "2026-08-17", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert Client.interval == (
+        datetime(2026, 8, 16).astimezone().astimezone(UTC),
+        datetime(2026, 8, 18).astimezone().astimezone(UTC),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "history",
+            "2026-08-16T20:00:00+10:00",
+            "2026-08-17T01:00:00+10:00",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert Client.interval == (
+        datetime(2026, 8, 16, 10, tzinfo=UTC),
+        datetime(2026, 8, 16, 15, tzinfo=UTC),
+    )
 
 
 def test_duplicate_never_deletes_and_delete_is_separate(monkeypatch) -> None:

@@ -1,6 +1,6 @@
 ---
 name: nutrilog
-description: Log explicit nutrient data to Google Health and view today's food log.
+description: Log explicit nutrient data to Google Health and view food history.
 ---
 
 # Nutrilog
@@ -12,6 +12,9 @@ when requested:
 nutrilog log --input - --dry-run --json
 nutrilog log --input - --json
 nutrilog history --json
+nutrilog history yesterday --json
+nutrilog history 2026-08-17 2026-08-23 --json
+nutrilog history '2026-08-22T20:00:00+10:00' '2026-08-23T01:00:00+10:00' --json
 nutrilog duplicate POINT_ID --input - --json
 nutrilog delete POINT_ID --yes --json
 ```
@@ -28,5 +31,8 @@ nutrient is inferred.
 source. Correct in two explicit steps: duplicate, inspect the saved entry, then
 use `delete --yes` only when the user authorizes deleting the source.
 
-Daily totals sum reported values and ignore `null`; they are `null` only when
+History totals sum reported values and ignore `null`; they are `null` only when
 no entry reports that nutrient.
+History accepts local dates or offset-aware ISO datetimes. Dates use the
+device's timezone and become UTC bounds; an end date is inclusive while an end
+datetime is exclusive. Entry selection compares timestamps only in UTC.
