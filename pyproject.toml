@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nutrilog"
-version = "0.4.2"
+version = "0.4.3"
 description = "Log explicit nutrient data directly to Google Health."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 license = "MIT"
 authors = [
     { name = "Nutrilog Contributors" }
@@ -20,6 +20,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: System :: Monitoring",
