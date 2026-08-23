@@ -15,8 +15,9 @@ nutrilog duplicate POINT_ID --protein 0
 nutrilog delete POINT_ID
 ```
 
-JSON input is a flat item carrying `name`, `meal_type`, `time`, optional
-`grams`, and nutrient fields.
+JSON input is a flat item carrying `name`, `meal_type`, optional `time`,
+optional `grams`, and nutrient fields. Omit `time` to use the device's current
+local time.
 Every new entry needs `kcal`, `protein`, `fat`, and `carbs`; explicit zero is a
 valid value. Use `--nutrient NAME=GRAMS` for another Google Health nutrient.
 Explicit flags override the input.
