@@ -16,12 +16,18 @@ nutrilog delete POINT_ID --yes --json
 
 `log` writes to Google Health, so run it only with user authorization. New
 entries require `kcal`, `protein`, `fat`, and `carbs`. `--input -` accepts one
-flat JSON item from Pantry, Eatout, Recipes, or Nutrilog. Omit `time` unless the
-user specified one; Nutrilog uses the device time, so never look up "now".
+flat JSON item from Pantry, Eatout, Recipes, or Nutrilog: pipe their `--json`
+output whole, envelope included, and unknown fields are dropped. An object you
+compose yourself must carry known keys only. Known keys are the shared
+`mealtime-nutrients` names, one per nutrient: dietary fibre is `fiber`, and
+`carbohydrates` is not a key at all, because carbohydrate is `carbs`. Omit
+`time` unless the user specified one; Nutrilog uses the device time, so never
+look up "now".
 
 `history` defaults to today. Bounds accept `today`, `yesterday`, ISO dates, or
 offset-aware ISO datetimes. Dates use the device timezone.
 
 `duplicate` creates a copy and never deletes its source. To correct an entry,
 duplicate it, inspect the copy, then delete the source only with explicit user
-authorization. Missing optional nutrients remain `null`; totals ignore them.
+authorization. Output states the four core macros and only the nutrients an
+entry carries; an absent key means nothing is known, and totals ignore it.
