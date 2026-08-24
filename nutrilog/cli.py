@@ -78,8 +78,7 @@ def _input(stream: TextIO | None) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise UsageError("input must contain one JSON object")
 
-    # JSON commands emit an envelope; acquisition commands may also wrap the
-    # item as `product`. Unwrap both so their output can be piped directly.
+    # Unwrap a JSON envelope or `product` wrapper, so output can be piped in.
     piped = "ok" in value
     if isinstance(value.get("data"), dict):
         value, piped = value["data"], True
@@ -434,9 +433,7 @@ def history_command(
     # A nutrient is totalled only where an entry states it; the core always.
     stated = {name for meal in meals for name in meal}
     optional = [name for name in OPTIONAL_NUTRIENTS if name in stated]
-    summary = {
-        key: _total(meals, key) for key in (*CORE_NUTRIENTS, *optional)
-    }
+    summary = {key: _total(meals, key) for key in (*CORE_NUTRIENTS, *optional)}
     emit(
         {"count": len(meals), "totals": summary, "meals": meals},
         json_output=json_output,
