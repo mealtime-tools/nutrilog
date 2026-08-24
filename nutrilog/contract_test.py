@@ -9,7 +9,7 @@ from google.oauth2.credentials import Credentials
 from mealtime_nutrients import CORE_NUTRIENTS, NUTRIENTS
 
 from nutrilog.auth import SCOPES
-from nutrilog.cli import NUTRIENT_FIELDS, _total, app, meal_json
+from nutrilog.cli import _total, app, meal_json
 from nutrilog.client import GoogleHealthClient
 from nutrilog.models import MealLog, MealType, TimeInterval
 
@@ -42,7 +42,7 @@ def test_api_payload_omits_unknowns_and_keeps_explicit_zero() -> None:
 
 def test_vocabulary_is_the_shared_one() -> None:
     """One shared list of names, accepted whole and extended by none."""
-    item = {"name": "Everything"} | dict.fromkeys(NUTRIENTS, 1)
+    item = {"name": "Everything"} | dict.fromkeys(reversed(NUTRIENTS), 1)
     result = CliRunner().invoke(
         app,
         ["log", "--input", "-", "--dry-run", "--json"],
@@ -52,7 +52,8 @@ def test_vocabulary_is_the_shared_one() -> None:
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)["data"]
     assert all(data[name] == 1 for name in NUTRIENTS)
-    assert NUTRIENT_FIELDS == set(NUTRIENTS)
+    # However an item spelled them, the output states the shared order.
+    assert [name for name in data if name in NUTRIENTS] == list(NUTRIENTS)
 
 
 def test_payload_routing_follows_the_shared_mapping() -> None:
@@ -144,7 +145,7 @@ def test_item_carries_the_core_macros_and_nothing_unstated() -> None:
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)["data"]
     assert all(data[name] == 0 for name in CORE_NUTRIENTS)
-    assert set(data) & NUTRIENT_FIELDS == set(CORE_NUTRIENTS)
+    assert [n for n in NUTRIENTS if n in data] == list(CORE_NUTRIENTS)
 
 
 def test_item_carries_a_stated_nutrient_only() -> None:
@@ -159,11 +160,11 @@ def test_item_carries_a_stated_nutrient_only() -> None:
     data = json.loads(result.output)["data"]
     assert data["fiber"] == 0
     assert data["saturated_fat"] == 2.1
-    assert set(data) & NUTRIENT_FIELDS == {
+    assert [n for n in NUTRIENTS if n in data] == [
         *CORE_NUTRIENTS,
         "fiber",
         "saturated_fat",
-    }
+    ]
 
 
 def test_legacy_core_macro_renders_as_zero() -> None:

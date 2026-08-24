@@ -20,6 +20,7 @@ from agentcli import (
 from mealtime_nutrients import (
     CORE_NUTRIENTS,
     NUTRIENTS,
+    OPTIONAL_NUTRIENTS,
     UNREACHABLE_NUTRIENT_TYPES,
 )
 
@@ -27,8 +28,9 @@ from nutrilog import __version__, auth
 from nutrilog.client import GoogleHealthClient, GoogleHealthError
 from nutrilog.models import MealLog, MealType, TimeInterval
 
-ITEM_FIELDS = {"name", "meal_type", "time", "grams"}
-NUTRIENT_FIELDS = set(NUTRIENTS)
+ITEM_FIELDS = ("name", "meal_type", "time", "grams")
+# Every key an item may state, ordered so output follows the shared order.
+INPUT_FIELDS = (*ITEM_FIELDS, *NUTRIENTS)
 # Written spellings that are not the wire name.
 NUTRIENT_ALIASES = {"calories": "kcal", "fibre": "fiber"}
 NUTRIENT_ARGUMENT = re.compile(r"^([^=]+)=([^=]+)$")
@@ -88,21 +90,18 @@ def _input(stream: TextIO | None) -> dict[str, Any]:
         value, piped = value["product"], True
 
     # Only a bare object is hand-authored, so only it reports an unknown key.
-    fields = ITEM_FIELDS | NUTRIENT_FIELDS
-    unknown = sorted(set(value) - fields)
+    unknown = sorted(set(value) - set(INPUT_FIELDS))
     if unknown and not piped:
         label = "key" if len(unknown) == 1 else "keys"
         raise UsageError(f"unknown input {label}: {', '.join(unknown)}")
-    return {key: value[key] for key in fields if key in value}
+    return {key: value[key] for key in INPUT_FIELDS if key in value}
 
 
 def _nutrients(
     input_data: dict[str, Any], arguments: tuple[str, ...]
 ) -> tuple[dict[str, float | None], dict[str, float]]:
     combined = {
-        key: value
-        for key, value in input_data.items()
-        if key in NUTRIENT_FIELDS
+        key: value for key, value in input_data.items() if key in NUTRIENTS
     }
     for argument in arguments:
         match = NUTRIENT_ARGUMENT.fullmatch(argument.strip())
@@ -120,7 +119,7 @@ def _nutrients(
         if key in CORE_NUTRIENTS:
             core[key] = _number(value, key)
             continue
-        if key not in NUTRIENT_FIELDS:
+        if key not in NUTRIENTS:
             raise UsageError(f"unknown nutrient: {name}")
         number = _number(value, str(name))
         if number is not None:
@@ -433,9 +432,11 @@ def history_command(
     except GoogleHealthError as exc:
         raise RemoteError(str(exc)) from exc
     # A nutrient is totalled only where an entry states it; the core always.
-    stated = {name for meal in meals for name in meal} & NUTRIENT_FIELDS
-    names = (*CORE_NUTRIENTS, *sorted(stated - set(CORE_NUTRIENTS)))
-    summary = {key: _total(meals, key) for key in names}
+    stated = {name for meal in meals for name in meal}
+    optional = [name for name in OPTIONAL_NUTRIENTS if name in stated]
+    summary = {
+        key: _total(meals, key) for key in (*CORE_NUTRIENTS, *optional)
+    }
     emit(
         {"count": len(meals), "totals": summary, "meals": meals},
         json_output=json_output,
