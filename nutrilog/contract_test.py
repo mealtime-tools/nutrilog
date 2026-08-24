@@ -115,6 +115,180 @@ def test_piped_whole_item_keeps_total_nutrients() -> None:
     assert json.loads(result.output)["data"]["grams"] == 50
 
 
+BARE_ITEM = {"name": "Typo", "kcal": 100, "protein": 1, "fat": 1, "carbs": 1}
+TYPO_ITEM = BARE_ITEM | {"saturatd_fat": 5}
+
+
+def test_bare_object_rejects_an_unknown_key_by_name() -> None:
+    """A bare object is hand-authored, so a misspelling is a mistake."""
+    result = CliRunner().invoke(
+        app,
+        ["log", "--input", "-", "--dry-run", "--json"],
+        input=json.dumps(TYPO_ITEM),
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "saturatd_fat" in result.output
+
+
+def test_bare_object_of_known_keys_logs() -> None:
+    result = CliRunner().invoke(
+        app,
+        ["log", "--input", "-", "--dry-run", "--json"],
+        input=json.dumps(BARE_ITEM | {"saturated_fat": 5}),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["data"]["saturated_fat"] == 5
+
+
+def test_envelope_drops_an_unknown_key_in_silence() -> None:
+    """The same typo from a tool is that tool's field, not a mistake here."""
+    result = CliRunner().invoke(
+        app,
+        ["log", "--input", "-", "--dry-run", "--json"],
+        input=json.dumps({"ok": True, "data": TYPO_ITEM}),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "saturatd_fat" not in json.loads(result.output)["data"]
+
+
+# Verbatim `--json` payloads, so the keys these tools wrap an item in stay pipeable.
+SIBLING_ENVELOPES = {
+    "pantry": {
+        "found": True,
+        "source": "afcd",
+        "id": "F005580",
+        "product": {
+            "id": "F005580",
+            "name": "Milk, cow, canned, evaporated, reduced fat (~2%)",
+            "title": "Milk, cow, canned, evaporated, reduced fat (~2%)",
+            "kcal": 90.8,
+            "kj": 380.0,
+            "protein": 7.8,
+            "fat": 2.1,
+            "carbs": 10.6,
+            "fiber": 0,
+            "sodium": None,
+            "sugar": 10.6,
+            "grams": 100,
+            "source": "afcd",
+        },
+    },
+    "eatout": {
+        "generated_at": "2026-08-21T00:00:00.000Z",
+        "count": 1,
+        "candidates": [
+            {
+                "kind": "meal",
+                "id": "cali-press-the-shredder-smoothie-regular",
+                "name": "Cali Press - The Shredder Smoothie (Regular)",
+                "kcal": 356,
+                "protein": 31.8,
+                "fat": 14.4,
+                "carbs": 23.2,
+                "fiber": None,
+                "sodium": None,
+                "sugar": None,
+                "complete": True,
+                "detail": {"restaurant": "Cali Press", "vegan": True},
+            }
+        ],
+        "unverifiable": [],
+    },
+    "recipes": {
+        "name": "Bean salad",
+        "servings": 1,
+        "tags": [],
+        "notes": "",
+        "grams": 350,
+        "ingredients": [],
+        "complete": True,
+        "unresolved": [],
+        "kcal": 420,
+        "protein": 25,
+        "fat": 12,
+        "carbs": 48,
+        "fiber": 9,
+        "sodium": 0.4,
+        "sugar": 6,
+        "path": "/tmp/recipes/bean-salad.yaml",
+    },
+}
+
+
+def test_sibling_envelopes_still_pipe_cleanly() -> None:
+    for tool, data in SIBLING_ENVELOPES.items():
+        result = CliRunner().invoke(
+            app,
+            ["log", "--input", "-", "--dry-run", "--json"],
+            input=json.dumps({"ok": True, "data": data}),
+        )
+
+        assert result.exit_code == 0, f"{tool}: {result.output}"
+        assert json.loads(result.output)["data"]["kcal"] > 0, tool
+
+
+def test_envelope_tolerates_a_field_this_version_never_saw() -> None:
+    """The tools ship on their own schedules; a new field is not an error."""
+    product = SIBLING_ENVELOPES["pantry"]["product"] | {"confidence": "high"}
+    result = CliRunner().invoke(
+        app,
+        ["log", "--input", "-", "--dry-run", "--json"],
+        input=json.dumps(
+            {"ok": True, "data": {"found": True, "product": product}}
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["data"]["kcal"] > 0
+
+
+def test_payload_without_an_item_reports_the_missing_macros() -> None:
+    """A Pantry miss keeps `product` null. The envelope makes it tool
+    output, so the leftover wrapper keys are dropped, not reported."""
+    result = CliRunner().invoke(
+        app,
+        ["log", "--input", "-", "--dry-run", "--json"],
+        input=json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "found": False,
+                    "source": "afcd",
+                    "id": "NOSUCH",
+                    "product": None,
+                },
+            }
+        ),
+    )
+
+    assert result.exit_code == 1
+    assert "need kcal, protein, fat, and carbs" in result.output
+
+
+def test_carbohydrate_is_declared_once() -> None:
+    """`carbs` owns `totalCarbohydrate`, so the enum spelling is not a key."""
+    item = {"name": "Twice", "kcal": 100, "protein": 1, "fat": 1, "carbs": 25}
+
+    bare = CliRunner().invoke(
+        app,
+        ["log", "--input", "-", "--dry-run", "--json"],
+        input=json.dumps(item | {"carbohydrates": 25}),
+    )
+    flag = CliRunner().invoke(
+        app,
+        "log Twice --kcal 100 --protein 1 --fat 1 --carbs 25"
+        " --nutrient carbohydrates=25 --dry-run --json".split(),
+    )
+
+    assert bare.exit_code == 1, bare.output
+    assert "carbohydrates" in bare.output
+    assert flag.exit_code == 1, flag.output
+    assert "carbohydrates" in flag.output
+
+
 def test_client_posts_one_nutrition_log() -> None:
     seen = {}
 

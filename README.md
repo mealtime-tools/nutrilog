@@ -20,7 +20,12 @@ optional `grams`, and nutrient fields. Omit `time` to use the device's current
 local time.
 Every new entry needs `kcal`, `protein`, `fat`, and `carbs`; explicit zero is a
 valid value. Use `--nutrient NAME=GRAMS` for another Google Health nutrient.
+Carbohydrate has its own field, so it is `carbs` and never `carbohydrates`.
 Explicit flags override the input.
+Piped tool output keeps its `{"ok":true,"data":...}` envelope, and a field this
+version has not heard of is dropped, so the other tools stay free to add one.
+A bare JSON object is read as hand-written instead: an unrecognised key there
+is an error, rather than a nutrient quietly left out of the entry.
 `grams` is written to Google as a gram serving and survives reads. When
 it is absent, the shared format treats the nutrients as a 100 g fallback.
 

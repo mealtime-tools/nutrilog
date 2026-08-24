@@ -28,13 +28,19 @@ STANDARD_NUTRIENTS = {
     "sugar": NutrientType.SUGAR,
 }
 ITEM_FIELDS = {"name", "meal_type", "time", "grams"}
+# `carbs` fills totalCarbohydrate; the enum spelling would declare it twice.
+CORE_ALIASES = {NutrientType.CARBOHYDRATES: "carbs"}
 NUTRIENT_FIELDS = {
     "kcal",
     "protein",
     "fat",
     "carbs",
     *STANDARD_NUTRIENTS,
-    *(nutrient.value.lower() for nutrient in NutrientType),
+    *(
+        nutrient.value.lower()
+        for nutrient in NutrientType
+        if nutrient not in CORE_ALIASES
+    ),
 }
 NUTRIENT_ARGUMENT = re.compile(r"^([^=]+)=([^=]+)$")
 
@@ -77,15 +83,21 @@ def _input(stream: TextIO | None) -> dict[str, Any]:
 
     # JSON commands emit an envelope; acquisition commands may also wrap the
     # item as `product`. Unwrap both so their output can be piped directly.
+    piped = "ok" in value
     if isinstance(value.get("data"), dict):
-        value = value["data"]
+        value, piped = value["data"], True
     candidates = value.get("candidates")
     if isinstance(candidates, list) and len(candidates) == 1:
-        value = candidates[0]
+        value, piped = candidates[0], True
     if isinstance(value.get("product"), dict):
-        value = value["product"]
+        value, piped = value["product"], True
 
+    # Only a bare object is hand-authored, so only it reports an unknown key.
     fields = ITEM_FIELDS | NUTRIENT_FIELDS
+    unknown = sorted(set(value) - fields)
+    if unknown and not piped:
+        label = "key" if len(unknown) == 1 else "keys"
+        raise UsageError(f"unknown input {label}: {', '.join(unknown)}")
     return {key: value[key] for key in fields if key in value}
 
 
@@ -115,6 +127,8 @@ def _nutrients(
         nutrient = NutrientType.from_string(str(name))
         if nutrient is None:
             raise UsageError(f"unknown nutrient: {name}")
+        if nutrient in CORE_ALIASES:
+            raise UsageError(f"use {CORE_ALIASES[nutrient]}, not {name}")
         number = _number(value, str(name))
         if number is not None:
             result[nutrient] = number
