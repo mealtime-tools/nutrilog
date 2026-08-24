@@ -410,11 +410,11 @@ wheels = [
 
 [[package]]
 name = "mealtime-nutrients"
-version = "0.2.0"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/7c/fa/6abaef39c94311cb85f8166a9a2331087b1ebbd134b25649f7b9b460b80e/mealtime_nutrients-0.2.0.tar.gz", hash = "sha256:65b4f0ac3d567f8dbd01ca89320899233cf49fbaf95ebf475340283fe619462c", size = 14057, upload-time = "2026-08-24T22:35:23.175Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/e0/a1559cd29f532700f377157d415ad3366af5de55b6e1661a0e54e0485406/mealtime_nutrients-0.3.0.tar.gz", hash = "sha256:7c9cc510c26c18f6a89d02e7b20929c8e58fc600ace1c7f8b73630f874922a36", size = 15187, upload-time = "2026-08-24T22:50:46.502Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/7c/2bfd5ff5aa7798bab18fdf1d484d3e6bfbc432b5bd88aad78a95104d8503/mealtime_nutrients-0.2.0-py3-none-any.whl", hash = "sha256:7d48286cf170ef70c67859b338fe25cb541d99a52456a53f3775c028ba1aa732", size = 11745, upload-time = "2026-08-24T22:35:21.852Z" },
+    { url = "https://files.pythonhosted.org/packages/21/4d/cc0fbd501390c98bebf584b3d7babf3b9c860a93f19feaebf1bbad3dcea3/mealtime_nutrients-0.3.0-py3-none-any.whl", hash = "sha256:65984dcc080a443ebb4513e62ed4b328b265684c1eeb036b6f502bfb2821e634", size = 13203, upload-time = "2026-08-24T22:50:45.412Z" },
 ]
 
 [[package]]
@@ -443,7 +443,7 @@ requires-dist = [
     { name = "google-auth", specifier = ">=2.28.0" },
     { name = "google-auth-oauthlib", specifier = ">=1.2.0" },
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "mealtime-nutrients", specifier = ">=0.2.0" },
+    { name = "mealtime-nutrients", specifier = ">=0.3.0" },
 ]
 
 [package.metadata.requires-dev]
