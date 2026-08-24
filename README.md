@@ -34,15 +34,18 @@ it is absent, the shared format treats the nutrients as a 100 g fallback.
 To correct an entry, duplicate it with the correction, inspect the result, then
 delete the source explicitly. JSON overrides may use `null` to remove a value.
 
-Missing legacy Google core macros render as zero in Nutrilog output. Other
-unknown values stay `null` and are omitted from writes. `--dry-run --json`
+Output carries `kcal`, `protein`, `fat` and `carbs` always, plus only the
+nutrients the entry states; an absent key and a `null` mean the same, while an
+explicit zero survives. Missing legacy Google core macros render as zero in
+Nutrilog output. Unstated nutrients are omitted from writes. `--dry-run --json`
 shows the record without authenticating or writing.
 
 `nutrilog history` reads today by default. Pass one date for that day or two
 dates for an inclusive range; dates may be ISO dates, `today`, or `yesterday`.
 Dates become UTC bounds using the device's local timezone. Offset-aware ISO
 datetimes are exact bounds; the end datetime is exclusive. Entries are then
-compared only in UTC. Totals sum reported values and ignore `null`; a total is
-`null` only when no entry reports it.
+compared only in UTC. Core macro totals are always present. Every other
+nutrient is totalled only when an entry states it, over the entries that state
+it, so a total may cover part of the range.
 
 OAuth tokens remain in `~/.config/nutrilog/tokens.json` with mode `0600`.

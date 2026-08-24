@@ -6,10 +6,10 @@ from datetime import UTC, datetime, timedelta, timezone
 import httpx
 from click.testing import CliRunner
 from google.oauth2.credentials import Credentials
-from mealtime_nutrients import NUTRIENTS
+from mealtime_nutrients import CORE_NUTRIENTS, NUTRIENTS
 
 from nutrilog.auth import SCOPES
-from nutrilog.cli import NUTRIENT_FIELDS, _total, app
+from nutrilog.cli import NUTRIENT_FIELDS, _total, app, meal_json
 from nutrilog.client import GoogleHealthClient
 from nutrilog.models import MealLog, MealType, TimeInterval
 
@@ -128,8 +128,49 @@ def test_json_input_and_output_are_flat() -> None:
     data = json.loads(result.output)["data"]
     assert data["kcal"] == 0
     assert data["protein"] == 0
-    assert data["sodium"] is None
+    assert "sodium" not in data
     assert "nutrients" not in data
+
+
+def test_item_carries_the_core_macros_and_nothing_unstated() -> None:
+    """Absence and null mean the same, so an unstated nutrient is omitted."""
+    item = {"name": "Water", "kcal": 0, "protein": 0, "fat": 0, "carbs": 0}
+    result = CliRunner().invoke(
+        app,
+        ["log", "--input", "-", "--dry-run", "--json"],
+        input=json.dumps(item),
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)["data"]
+    assert all(data[name] == 0 for name in CORE_NUTRIENTS)
+    assert set(data) & NUTRIENT_FIELDS == set(CORE_NUTRIENTS)
+
+
+def test_item_carries_a_stated_nutrient_only() -> None:
+    item = BARE_ITEM | {"fiber": 0, "saturated_fat": 2.1}
+    result = CliRunner().invoke(
+        app,
+        ["log", "--input", "-", "--dry-run", "--json"],
+        input=json.dumps(item),
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)["data"]
+    assert data["fiber"] == 0
+    assert data["saturated_fat"] == 2.1
+    assert set(data) & NUTRIENT_FIELDS == {
+        *CORE_NUTRIENTS,
+        "fiber",
+        "saturated_fat",
+    }
+
+
+def test_legacy_core_macro_renders_as_zero() -> None:
+    """Google Health can return an explicit zero as absent; only the four."""
+    values = meal_json(meal(kcal=0, protein=None, fat=None, carbs=None))
+
+    assert [values[name] for name in CORE_NUTRIENTS] == [0, 0, 0, 0]
 
 
 def test_new_entry_requires_every_core_nutrient() -> None:
@@ -515,6 +556,49 @@ def test_duplicate_never_deletes_and_delete_is_separate(monkeypatch) -> None:
 
     assert result.exit_code == 0, result.output
     assert Client.deleted == "old"
+
+
+def test_history_totals_cover_the_core_and_stated_nutrients(
+    monkeypatch,
+) -> None:
+    class Client:
+        def history(self, start: datetime, end: datetime) -> list[MealLog]:
+            return [
+                meal(kcal=100, protein=10, fat=1, carbs=5),
+                meal(
+                    kcal=200,
+                    protein=20,
+                    fat=2,
+                    carbs=6,
+                    nutrients={"sugar": 3},
+                ),
+            ]
+
+    monkeypatch.setattr("nutrilog.cli.GoogleHealthClient", Client)
+    result = CliRunner().invoke(app, ["history", "--json"])
+
+    assert result.exit_code == 0, result.output
+    totals = json.loads(result.output)["data"]["totals"]
+    assert totals == {
+        "kcal": 300,
+        "protein": 30,
+        "fat": 3,
+        "carbs": 11,
+        "sugar": 3,
+    }
+
+
+def test_history_totals_omit_a_nutrient_no_entry_states(monkeypatch) -> None:
+    class Client:
+        def history(self, start: datetime, end: datetime) -> list[MealLog]:
+            return [meal(kcal=100, protein=10, fat=1, carbs=5)]
+
+    monkeypatch.setattr("nutrilog.cli.GoogleHealthClient", Client)
+    result = CliRunner().invoke(app, ["history", "--json"])
+
+    assert result.exit_code == 0, result.output
+    totals = json.loads(result.output)["data"]["totals"]
+    assert set(totals) == set(CORE_NUTRIENTS)
 
 
 def test_totals_sum_reported_values_and_ignore_null() -> None:

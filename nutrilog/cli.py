@@ -29,8 +29,6 @@ from nutrilog.models import MealLog, MealType, TimeInterval
 
 ITEM_FIELDS = {"name", "meal_type", "time", "grams"}
 NUTRIENT_FIELDS = set(NUTRIENTS)
-# Always reported, so a reader can tell an absent figure from a zero.
-REPORTED_NUTRIENTS = ("fiber", "sodium", "sugar")
 # Written spellings that are not the wire name.
 NUTRIENT_ALIASES = {"calories": "kcal", "fibre": "fiber"}
 NUTRIENT_ARGUMENT = re.compile(r"^([^=]+)=([^=]+)$")
@@ -193,16 +191,8 @@ def meal_json(meal: MealLog) -> dict[str, Any]:
     }
     # Legacy Google entries may omit a core macro; render those as zero.
     values.update({name: getattr(meal, name) or 0 for name in CORE_NUTRIENTS})
-    values.update(
-        {name: meal.nutrients.get(name) for name in REPORTED_NUTRIENTS}
-    )
-    values.update(
-        {
-            name: grams
-            for name, grams in meal.nutrients.items()
-            if name not in REPORTED_NUTRIENTS
-        }
-    )
+    # Every other nutrient appears only where the meal states a figure.
+    values.update(meal.nutrients)
     if meal.grams is not None:
         values["grams"] = meal.grams
     return values
@@ -442,10 +432,10 @@ def history_command(
         ]
     except GoogleHealthError as exc:
         raise RemoteError(str(exc)) from exc
-    summary = {
-        key: _total(meals, key)
-        for key in (*CORE_NUTRIENTS, *REPORTED_NUTRIENTS)
-    }
+    # A nutrient is totalled only where an entry states it; the core always.
+    stated = {name for meal in meals for name in meal} & NUTRIENT_FIELDS
+    names = (*CORE_NUTRIENTS, *sorted(stated - set(CORE_NUTRIENTS)))
+    summary = {key: _total(meals, key) for key in names}
     emit(
         {"count": len(meals), "totals": summary, "meals": meals},
         json_output=json_output,

@@ -29,4 +29,5 @@ offset-aware ISO datetimes. Dates use the device timezone.
 
 `duplicate` creates a copy and never deletes its source. To correct an entry,
 duplicate it, inspect the copy, then delete the source only with explicit user
-authorization. Missing optional nutrients remain `null`; totals ignore them.
+authorization. Output states the four core macros and only the nutrients an
+entry carries; an absent key means nothing is known, and totals ignore it.
