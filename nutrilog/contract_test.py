@@ -340,6 +340,19 @@ def test_carbohydrate_is_declared_once() -> None:
     assert "carbohydrates" in flag.output
 
 
+def test_read_back_never_adds_a_second_carbohydrate() -> None:
+    """CARBOHYDRATES is unreachable, so a foreign entry is not read as one."""
+    payload = meal(carbs=25).to_api_payload()
+    payload["nutritionLog"]["nutrients"] = [
+        {"nutrient": "CARBOHYDRATES", "quantity": {"grams": 25}}
+    ]
+
+    restored = MealLog.from_api_payload(payload)
+
+    assert restored.carbs == 25
+    assert restored.nutrients == {}
+
+
 def test_client_posts_one_nutrition_log() -> None:
     seen = {}
 
