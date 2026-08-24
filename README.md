@@ -19,9 +19,10 @@ JSON input is a flat item carrying `name`, `meal_type`, optional `time`,
 optional `grams`, and nutrient fields. Omit `time` to use the device's current
 local time.
 Every new entry needs `kcal`, `protein`, `fat`, and `carbs`; explicit zero is a
-valid value. Use `--nutrient NAME=GRAMS` for another Google Health nutrient.
-Carbohydrate has its own field, so it is `carbs` and never `carbohydrates`.
-Explicit flags override the input.
+valid value. Use `--nutrient NAME=GRAMS` for another nutrient; names come from
+`mealtime-nutrients`, the list the mealtime tools share, which holds exactly
+one per nutrient. Dietary fibre is `fiber`, and carbohydrate has its own field,
+so it is `carbs` and never `carbohydrates`. Explicit flags override the input.
 Piped tool output keeps its `{"ok":true,"data":...}` envelope, and a field this
 version has not heard of is dropped, so the other tools stay free to add one.
 A bare JSON object is read as hand-written instead: an unrecognised key there
