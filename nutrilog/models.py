@@ -6,6 +6,17 @@ from datetime import UTC, datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
+from mealtime_nutrients import (
+    API_FIELDS,
+    API_NUTRIENTS,
+    CORE_NUTRIENTS,
+    ENERGY_NUTRIENT,
+    ENERGY_UNIT,
+)
+
+# Read back: the wire name for each nutrient Google Health can return.
+WIRE_NAMES = {member: name for name, member in API_NUTRIENTS.items()}
+
 
 class MealType(str, Enum):
     MEAL_TYPE_UNSPECIFIED = "MEAL_TYPE_UNSPECIFIED"
@@ -28,54 +39,9 @@ class MealType(str, Enum):
         )
 
 
-class NutrientType(str, Enum):
-    BIOTIN = "BIOTIN"
-    CAFFEINE = "CAFFEINE"
-    CALCIUM = "CALCIUM"
-    CARBOHYDRATES = "CARBOHYDRATES"
-    CHLORIDE = "CHLORIDE"
-    CHOLESTEROL = "CHOLESTEROL"
-    CHROMIUM = "CHROMIUM"
-    COPPER = "COPPER"
-    DIETARY_FIBER = "DIETARY_FIBER"
-    FOLATE = "FOLATE"
-    FOLIC_ACID = "FOLIC_ACID"
-    IODINE = "IODINE"
-    IRON = "IRON"
-    MAGNESIUM = "MAGNESIUM"
-    MANGANESE = "MANGANESE"
-    MOLYBDENUM = "MOLYBDENUM"
-    MONOUNSATURATED_FAT = "MONOUNSATURATED_FAT"
-    NIACIN = "NIACIN"
-    PANTOTHENIC_ACID = "PANTOTHENIC_ACID"
-    PHOSPHORUS = "PHOSPHORUS"
-    POLYUNSATURATED_FAT = "POLYUNSATURATED_FAT"
-    POTASSIUM = "POTASSIUM"
-    PROTEIN = "PROTEIN"
-    RIBOFLAVIN = "RIBOFLAVIN"
-    SATURATED_FAT = "SATURATED_FAT"
-    SELENIUM = "SELENIUM"
-    SODIUM = "SODIUM"
-    SUGAR = "SUGAR"
-    THIAMIN = "THIAMIN"
-    TRANS_FAT = "TRANS_FAT"
-    UNSATURATED_FAT = "UNSATURATED_FAT"
-    VITAMIN_A = "VITAMIN_A"
-    VITAMIN_B12 = "VITAMIN_B12"
-    VITAMIN_B6 = "VITAMIN_B6"
-    VITAMIN_C = "VITAMIN_C"
-    VITAMIN_D = "VITAMIN_D"
-    VITAMIN_E = "VITAMIN_E"
-    VITAMIN_K = "VITAMIN_K"
-    ZINC = "ZINC"
-
-    @classmethod
-    def from_string(cls, value: str) -> "NutrientType | None":
-        key = re.sub(r"[\s-]+", "_", value.strip().upper())
-        key = {"FIBER": "DIETARY_FIBER", "FIBRE": "DIETARY_FIBER"}.get(
-            key, key
-        )
-        return cls.__members__.get(key)
+def _unit(nutrient: str) -> str:
+    """Google Health's dedicated objects take grams; energy takes kcal."""
+    return ENERGY_UNIT if nutrient == ENERGY_NUTRIENT else "grams"
 
 
 def _offset(value: datetime) -> str:
@@ -112,8 +78,15 @@ class MealLog:
     fat: float | None = None
     carbs: float | None = None
     grams: float | None = None
-    nutrients: dict[NutrientType, float] = field(default_factory=dict)
+    nutrients: dict[str, float] = field(default_factory=dict)
     id: str | None = None
+
+    def _figures(self) -> dict[str, float]:
+        """Every recorded figure by wire name; the core macros are fields."""
+        core = {name: getattr(self, name) for name in CORE_NUTRIENTS}
+        return self.nutrients | {
+            name: value for name, value in core.items() if value is not None
+        }
 
     def to_api_payload(self) -> dict[str, Any]:
         """Omit unknown fields. Keep explicitly supplied zeros."""
@@ -122,27 +95,27 @@ class MealLog:
             "mealType": self.meal_type.value,
             "interval": self.interval.as_api(),
         }
-        if self.kcal is not None:
-            log["energy"] = {"kcal": self.kcal}
-        if self.carbs is not None:
-            log["totalCarbohydrate"] = {"grams": self.carbs}
-        if self.fat is not None:
-            log["totalFat"] = {"grams": self.fat}
+        figures = self._figures()
+
+        # API_FIELDS names own an object; the rest are array entries.
+        for name, api_field in API_FIELDS.items():
+            if name in figures:
+                log[api_field] = {_unit(name): figures[name]}
         if self.grams is not None:
             log["serving"] = {
                 "amount": self.grams,
                 "foodMeasurementUnitDisplayName": "gram",
             }
 
-        nutrients = dict(self.nutrients)
-        if self.protein is not None:
-            nutrients[NutrientType.PROTEIN] = self.protein
-        if nutrients:
+        entries = {
+            API_NUTRIENTS[name]: grams
+            for name, grams in figures.items()
+            if name in API_NUTRIENTS
+        }
+        if entries:
             log["nutrients"] = [
-                {"nutrient": nutrient.value, "quantity": {"grams": grams}}
-                for nutrient, grams in sorted(
-                    nutrients.items(), key=lambda item: item[0].value
-                )
+                {"nutrient": nutrient, "quantity": {"grams": grams}}
+                for nutrient, grams in sorted(entries.items())
             ]
         return {"nutritionLog": log}
 
@@ -159,15 +132,13 @@ class MealLog:
             start + timedelta(minutes=1),
             raw_interval.get("endUtcOffset"),
         )
-        nutrients: dict[NutrientType, float] = {}
+        nutrients: dict[str, float] = {}
         for entry in log.get("nutrients") or []:
-            nutrient = NutrientType.from_string(
-                str(entry.get("nutrient") or "")
-            )
+            member = str(entry.get("nutrient") or "").strip().upper()
             grams = (entry.get("quantity") or {}).get("grams")
-            if nutrient is not None and grams is not None:
-                nutrients[nutrient] = float(grams)
-        protein = nutrients.pop(NutrientType.PROTEIN, None)
+            if member in WIRE_NAMES and grams is not None:
+                nutrients[WIRE_NAMES[member]] = float(grams)
+        protein = nutrients.pop("protein", None)
         serving = log.get("serving") or {}
         unit = str(serving.get("foodMeasurementUnitDisplayName") or "")
         grams = (
@@ -181,9 +152,10 @@ class MealLog:
             name=str(log.get("foodDisplayName") or "Meal"),
             meal_type=MealType.from_string(log.get("mealType")),
             interval=TimeInterval(start=start, end=end),
-            kcal=_quantity(log.get("energy"), "kcal"),
-            carbs=_quantity(log.get("totalCarbohydrate"), "grams"),
-            fat=_quantity(log.get("totalFat"), "grams"),
+            **{
+                name: _quantity(log.get(api_field), _unit(name))
+                for name, api_field in API_FIELDS.items()
+            },
             protein=protein,
             grams=grams,
             nutrients=nutrients,

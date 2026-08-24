@@ -6,9 +6,10 @@ from datetime import UTC, datetime, timedelta, timezone
 import httpx
 from click.testing import CliRunner
 from google.oauth2.credentials import Credentials
+from mealtime_nutrients import NUTRIENTS
 
 from nutrilog.auth import SCOPES
-from nutrilog.cli import _total, app
+from nutrilog.cli import NUTRIENT_FIELDS, _total, app
 from nutrilog.client import GoogleHealthClient
 from nutrilog.models import MealLog, MealType, TimeInterval
 
@@ -37,6 +38,56 @@ def test_api_payload_omits_unknowns_and_keeps_explicit_zero() -> None:
         "amount": 90,
         "foodMeasurementUnitDisplayName": "gram",
     }
+
+
+def test_vocabulary_is_the_shared_one() -> None:
+    """One shared list of names, accepted whole and extended by none."""
+    item = {"name": "Everything"} | dict.fromkeys(NUTRIENTS, 1)
+    result = CliRunner().invoke(
+        app,
+        ["log", "--input", "-", "--dry-run", "--json"],
+        input=json.dumps(item),
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)["data"]
+    assert all(data[name] == 1 for name in NUTRIENTS)
+    assert NUTRIENT_FIELDS == set(NUTRIENTS)
+
+
+def test_payload_routing_follows_the_shared_mapping() -> None:
+    """Dedicated objects for kcal, carbs and fat; protein is an array entry."""
+    log = meal(kcal=100, protein=10, fat=5, carbs=20, nutrients={"fiber": 3})
+
+    payload = log.to_api_payload()["nutritionLog"]
+
+    assert payload["energy"] == {"kcal": 100}
+    assert payload["totalCarbohydrate"] == {"grams": 20}
+    assert payload["totalFat"] == {"grams": 5}
+    assert payload["nutrients"] == [
+        {"nutrient": "DIETARY_FIBER", "quantity": {"grams": 3}},
+        {"nutrient": "PROTEIN", "quantity": {"grams": 10}},
+    ]
+
+    restored = MealLog.from_api_payload(log.to_api_payload())
+
+    assert restored.protein == 10
+    assert restored.nutrients == {"fiber": 3}
+
+
+def test_written_spellings_reach_their_wire_name() -> None:
+    result = CliRunner().invoke(
+        app,
+        "log Spelled --calories 100 --protein 1 --fat 1 --carbs 1"
+        " --nutrient saturated-fat=5 --nutrient FIBRE=3"
+        " --dry-run --json".split(),
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)["data"]
+    assert data["kcal"] == 100
+    assert data["saturated_fat"] == 5
+    assert data["fiber"] == 3
 
 
 def test_api_payload_restores_recorded_utc_offset() -> None:

@@ -17,32 +17,29 @@ from agentcli import (
     skill_group,
 )
 
+from mealtime_nutrients import (
+    CORE_NUTRIENTS,
+    NUTRIENTS,
+    UNREACHABLE_NUTRIENT_TYPES,
+)
+
 from nutrilog import __version__, auth
 from nutrilog.client import GoogleHealthClient, GoogleHealthError
-from nutrilog.models import MealLog, MealType, NutrientType, TimeInterval
+from nutrilog.models import MealLog, MealType, TimeInterval
 
-CORE_NUTRIENTS = ("kcal", "protein", "fat", "carbs")
-STANDARD_NUTRIENTS = {
-    "fiber": NutrientType.DIETARY_FIBER,
-    "sodium": NutrientType.SODIUM,
-    "sugar": NutrientType.SUGAR,
-}
 ITEM_FIELDS = {"name", "meal_type", "time", "grams"}
-# `carbs` fills totalCarbohydrate; the enum spelling would declare it twice.
-CORE_ALIASES = {NutrientType.CARBOHYDRATES: "carbs"}
-NUTRIENT_FIELDS = {
-    "kcal",
-    "protein",
-    "fat",
-    "carbs",
-    *STANDARD_NUTRIENTS,
-    *(
-        nutrient.value.lower()
-        for nutrient in NutrientType
-        if nutrient not in CORE_ALIASES
-    ),
-}
+NUTRIENT_FIELDS = set(NUTRIENTS)
+# Always reported, so a reader can tell an absent figure from a zero.
+REPORTED_NUTRIENTS = ("fiber", "sodium", "sugar")
+# Written spellings that are not the wire name.
+NUTRIENT_ALIASES = {"calories": "kcal", "fibre": "fiber"}
 NUTRIENT_ARGUMENT = re.compile(r"^([^=]+)=([^=]+)$")
+
+
+def _nutrient_name(value: str) -> str:
+    """A written nutrient spelling reduced to its wire name."""
+    key = re.sub(r"[\s-]+", "_", value.strip().lower())
+    return NUTRIENT_ALIASES.get(key, key)
 
 
 def _number(value: Any, field: str) -> float | None:
@@ -103,7 +100,7 @@ def _input(stream: TextIO | None) -> dict[str, Any]:
 
 def _nutrients(
     input_data: dict[str, Any], arguments: tuple[str, ...]
-) -> tuple[dict[str, float | None], dict[NutrientType, float]]:
+) -> tuple[dict[str, float | None], dict[str, float]]:
     combined = {
         key: value
         for key, value in input_data.items()
@@ -116,22 +113,20 @@ def _nutrients(
         combined[match.group(1).strip()] = match.group(2).strip()
 
     core: dict[str, float | None] = {}
-    result: dict[NutrientType, float] = {}
+    result: dict[str, float] = {}
     for name, value in combined.items():
-        key = str(name).strip().lower()
-        if key == "calories":
-            key = "kcal"
+        key = _nutrient_name(str(name))
+        # Carbohydrate is `carbs`; a second spelling would declare it twice.
+        if key.upper() in UNREACHABLE_NUTRIENT_TYPES:
+            raise UsageError(f"use carbs, not {name}")
         if key in CORE_NUTRIENTS:
             core[key] = _number(value, key)
             continue
-        nutrient = NutrientType.from_string(str(name))
-        if nutrient is None:
+        if key not in NUTRIENT_FIELDS:
             raise UsageError(f"unknown nutrient: {name}")
-        if nutrient in CORE_ALIASES:
-            raise UsageError(f"use {CORE_ALIASES[nutrient]}, not {name}")
         number = _number(value, str(name))
         if number is not None:
-            result[nutrient] = number
+            result[key] = number
     return core, result
 
 
@@ -196,21 +191,16 @@ def meal_json(meal: MealLog) -> dict[str, Any]:
         "meal_type": meal.meal_type.value,
         "time": meal.interval.start.isoformat(),
     }
+    # Legacy Google entries may omit a core macro; render those as zero.
+    values.update({name: getattr(meal, name) or 0 for name in CORE_NUTRIENTS})
     values.update(
-        {
-            "kcal": meal.kcal or 0,
-            "protein": meal.protein or 0,
-            "fat": meal.fat or 0,
-            "carbs": meal.carbs or 0,
-        }
+        {name: meal.nutrients.get(name) for name in REPORTED_NUTRIENTS}
     )
-    for name, nutrient in STANDARD_NUTRIENTS.items():
-        values[name] = meal.nutrients.get(nutrient)
     values.update(
         {
-            nutrient.value.lower(): grams
-            for nutrient, grams in meal.nutrients.items()
-            if nutrient not in STANDARD_NUTRIENTS.values()
+            name: grams
+            for name, grams in meal.nutrients.items()
+            if name not in REPORTED_NUTRIENTS
         }
     )
     if meal.grams is not None:
@@ -225,10 +215,7 @@ def _human(data: dict[str, Any]) -> list[str]:
 
     return [
         f"{data['name']} ({data['meal_type']})",
-        "  ".join(
-            f"{key} {value(key)}"
-            for key in ("kcal", "protein", "fat", "carbs")
-        ),
+        "  ".join(f"{key} {value(key)}" for key in CORE_NUTRIENTS),
         data["time"],
     ]
 
@@ -246,16 +233,14 @@ def _history_human(data: dict[str, Any]) -> list[str]:
         consumed = datetime.fromisoformat(meal["time"]).strftime(
             "%Y-%m-%d %H:%M"
         )
-        macros = "  ".join(
-            f"{key} {meal[key]}" for key in ("kcal", "protein", "fat", "carbs")
-        )
+        macros = "  ".join(f"{key} {meal[key]}" for key in CORE_NUTRIENTS)
         lines.append(f"{consumed}  {meal['name']}  {macros}")
     summary = data["totals"]
     lines.append(
         "Total  "
         + "  ".join(
             f"{key} {summary[key] if summary[key] is not None else '?'}"
-            for key in ("kcal", "protein", "fat", "carbs")
+            for key in CORE_NUTRIENTS
         )
     )
     return lines
@@ -459,15 +444,7 @@ def history_command(
         raise RemoteError(str(exc)) from exc
     summary = {
         key: _total(meals, key)
-        for key in (
-            "kcal",
-            "protein",
-            "fat",
-            "carbs",
-            "fiber",
-            "sodium",
-            "sugar",
-        )
+        for key in (*CORE_NUTRIENTS, *REPORTED_NUTRIENTS)
     }
     emit(
         {"count": len(meals), "totals": summary, "meals": meals},
