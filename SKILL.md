@@ -31,3 +31,10 @@ offset-aware ISO datetimes. Dates use the device timezone.
 duplicate it, inspect the copy, then delete the source only with explicit user
 authorization. Output states the four core macros and only the nutrients an
 entry carries; an absent key means nothing is known, and totals ignore it.
+
+A duplicate keeps the source time. To re-log the same food now, take the time
+from the device clock rather than a guess:
+
+```console
+nutrilog duplicate POINT_ID --time "$(date +%Y-%m-%dT%H:%M:%S%z)" --json
+```
