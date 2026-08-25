@@ -247,7 +247,7 @@ def test_envelope_drops_an_unknown_key_in_silence() -> None:
     assert "saturatd_fat" not in json.loads(result.output)["data"]
 
 
-# Verbatim `--json` payloads, so the keys these tools wrap an item in stay pipeable.
+# Verbatim `--json` payloads, so their wrapper keys stay pipeable.
 SIBLING_ENVELOPES = {
     "pantry": {
         "found": True,
